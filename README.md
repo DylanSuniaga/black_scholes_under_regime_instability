@@ -12,6 +12,8 @@ The objective is not to "prove BS wrong," nor to propose an alpha strategy. The 
 
 > Under what volatility regimes does Black–Scholes cease to be a reliable local approximation for pricing and delta hedging equity options?
 
+Regime instability matters in practice because option pricing and risk management decisions depend on model reliability. When volatility regimes shift, pricing models that assume constant volatility can systematically misprice options, leading to valuation errors. Similarly, delta-hedging strategies calibrated under stable regimes may fail to protect portfolios during volatility spikes, exposing traders to unhedged risk.
+
 **Sub-questions**
 
 1. **Data integrity:** Can we align underlying prices to the same scale as option strikes (split-consistent unadjustment)?
@@ -37,7 +39,7 @@ The objective is not to "prove BS wrong," nor to propose an alpha strategy. The 
 ## Methods
 
 ### 1) Split-consistent underlying reconstruction (`S_unadj`)
-Corporate actions can induce spurious discontinuities if price series are mixed across adjusted/unadjusted scales.
+Corporate actions can induce spurious discontinuities if price series are mixed across adjusted/unadjusted scales. If realized volatility were computed on adjusted prices while option strikes remain unadjusted, it would lead to inconsistencies between strikes, implied volatility, and option prices. Corporate actions make the stock look like it jumped when in reality it did not, which creates fake realized volatility that contaminates regime classification and pricing diagnostics.
 
 - Known splits (TSLA): 2020-08-31 (5-for-1), 2022-08-25 (3-for-1)
 - Construct a **cumulative adjustment factor** and define:
@@ -50,10 +52,12 @@ Corporate actions can induce spurious discontinuities if price series are mixed 
 - Plots produced:
   - `unadjustment_validation.png`
 
+![Unadjustment Validation](unadjustment_validation.png)
+
 ---
 
 ### 2) Realized volatility (RV) and regime labeling (causal)
-Realized volatility is computed on the **unadjusted** series to match the strike scale.
+Realized volatility is computed on the **unadjusted** series to match the strike scale. This ensures consistency: if RV were computed on adjusted prices, it would create artificial volatility spikes at split dates, leading to misclassification of regimes and invalidating the causal structure of the analysis.
 
 - Compute log returns on `S_unadj`
 - Split-guard returns:
@@ -66,6 +70,7 @@ Realized volatility is computed on the **unadjusted** series to match the strike
 **Causal alignment**
 - Regimes are defined using **lagged** RV:
   - `RV_20_lag1 = RV_20.shift(1)`
+- This lagging is necessary to ensure causal validity: at time t, we are guaranteed to have information from t−1, but not necessarily from t. Using contemporaneous RV would introduce lookahead bias, making regime classification predictive rather than diagnostic.
 - Regime thresholds:
   - low / mid / high based on 33% and 67% quantiles of `RV_20_lag1`
   - stress regime if `RV_20_lag1` > 90th percentile
@@ -77,6 +82,8 @@ Realized volatility is computed on the **unadjusted** series to match the strike
 
 Plot produced:
 - `rv_regimes.png`
+
+![RV Regimes](rv_regimes.png)
 
 ---
 
@@ -94,7 +101,7 @@ Plot produced:
 ---
 
 ### 4) Pricing residual diagnostics under a stable volatility proxy
-To avoid tautology (pricing with market IV), pricing diagnostics use a **sigma proxy**.
+To avoid tautology (pricing with market IV), pricing diagnostics use a **sigma proxy**. Implied volatility already reflects what the market thinks volatility will be, which overfits Black–Scholes to the market and obscures model failures. By using an independent volatility proxy (realized volatility or smoothed ATM IV), we can assess whether BS pricing errors are regime-dependent when the model is not "cheating" with market-implied parameters.
 
 Sigma proxy options:
 - Primary: trailing realized volatility `RV_20_lag1`
@@ -115,6 +122,8 @@ Key plots:
 Saved as:
 - `diagnostic_plots.png`
 
+![Diagnostic Plots](diagnostic_plots.png)
+
 ---
 
 ### 5) Surface slices by regime
@@ -126,6 +135,8 @@ To study regime-conditioned smile/term structure behavior:
 
 Saved as:
 - `iv_surface_analysis.png`
+
+![IV Surface Analysis](iv_surface_analysis.png)
 
 ---
 
@@ -148,6 +159,8 @@ Define hedging error vs BS prediction (using same-day IV to compute BS value at 
 Saved as:
 - `delta_hedging_analysis.png`
 
+![Delta Hedging Analysis](delta_hedging_analysis.png)
+
 ---
 
 ## Results (Regime-Conditioned Summary)
@@ -165,9 +178,9 @@ high        2253859    0.8288     0.7149    0.7648      -5.5631        -0.1331  
 ```
 
 **Interpretation**
-- Low/mid regimes show positive residuals on average (BS proxy underprices).
-- High regime shows negative mean residual and much larger error dispersion.
-- RMSE and residual standard deviation increase sharply in high regimes, consistent with model instability under volatility clustering and regime shifts.
+- Low/mid regimes show positive residuals on average (BS proxy underprices). This suggests that in stable markets, option prices embed modest risk premia beyond what realized volatility alone would justify, reflecting normal insurance demand.
+- High regime shows negative mean residual and much larger error dispersion. The sign reversal indicates that during volatility spikes, market prices often exceed BS model prices even when using elevated realized volatility as the proxy. This reflects fear-driven demand for protection (volatility risk premium) and the market's anticipation of continued volatility clustering that the constant-volatility BS model cannot capture.
+- RMSE and residual standard deviation increase sharply in high regimes, consistent with model instability under volatility clustering and regime shifts. The heavy-tailed error distribution in high regimes suggests that BS pricing failures are not merely mean shifts but fundamental distributional breakdowns.
 
 ---
 
@@ -184,15 +197,15 @@ high      1902           -0.2714             -0.2265           16.6264          
 ```
 
 **Interpretation**
-- Delta hedging error is near-zero on average but becomes substantially more dispersed in high regimes.
-- RMSE increases from ~4.8 (low) → ~7.5 (mid) → ~16.6 (high), indicating heavy-tailed hedging losses during stress regimes.
+- Delta hedging error is near-zero on average but becomes substantially more dispersed in high regimes. The near-zero mean across all regimes suggests that delta hedging is directionally correct on average, but the variance explosion in high regimes reveals that discrete rebalancing and volatility jumps create large tail risks.
+- RMSE increases from ~4.8 (low) → ~7.5 (mid) → ~16.6 (high), indicating heavy-tailed hedging losses during stress regimes. This threefold increase in hedging error dispersion reflects the breakdown of the continuous-hedging assumption: during volatility spikes, price moves occur faster than daily rebalancing can capture, and the constant-volatility assumption fails to predict the magnitude of moves.
 
 ---
 
 ## Discussion
 
 ### What "regime instability" means here
-Regime instability is the empirical observation that **pricing and hedging errors are not stationary**. They change in **level and distribution shape** as the market transitions from low → mid → high realized volatility regimes.
+Regime instability is the empirical observation that **pricing and hedging errors are not stationary**. They change in **level and distribution shape** as the market transitions from low → mid → high realized volatility regimes. This study is diagnostic, not predictive or alpha-seeking: it identifies conditional failure modes rather than proposing trading strategies.
 
 ### Why the failures occur
 Black–Scholes assumes:
@@ -207,8 +220,7 @@ High-volatility periods violate these assumptions most severely through:
 - changes in risk premia embedded in option prices
 
 ### Practical implication
-- BS Greeks and constant-σ pricing are most reliable in stable regimes.
-- During stress regimes, regime-aware risk controls and alternative dynamics (stochastic volatility / jumps) are justified.
+Black–Scholes is a good guideline and mapping to the markets, but one must be cautious during high-volatility regimes. BS Greeks and constant-σ pricing are most reliable in stable regimes, where the model serves as a useful local approximation. During stress regimes, regime-aware risk controls and alternative dynamics (stochastic volatility / jumps) are justified. The failures documented here are conditional on regime, not universal: the model's utility depends on recognizing when its assumptions hold and when they break down.
 
 ---
 
